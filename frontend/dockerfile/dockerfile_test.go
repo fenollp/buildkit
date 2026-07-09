@@ -232,6 +232,7 @@ var allTests = integration.TestFuncs(
 	testWorkdirUser,
 	testWorkdirCopyIgnoreRelative,
 	testWorkdirExists,
+	testWorkdirOldPWD,
 
 	// errors_test.go
 	testErrorsSourceMap,

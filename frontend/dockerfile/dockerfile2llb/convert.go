@@ -1506,6 +1506,8 @@ func dispatchRun(d *dispatchState, c *instructions.RunCommand, proxy *llb.ProxyE
 }
 
 func dispatchWorkdir(d *dispatchState, c *instructions.WorkdirCommand, commit bool, opt *dispatchOpt) error {
+	workdirWasSet := d.workdirSet
+
 	if commit {
 		// This linter rule checks if workdir has been set to an absolute value locally
 		// within the current dockerfile. Absolute paths in base images are ignored
@@ -1523,7 +1525,9 @@ func dispatchWorkdir(d *dispatchState, c *instructions.WorkdirCommand, commit bo
 		d.workdirSet = true
 	}
 
-	wd, err := system.NormalizeWorkdir(d.image.Config.WorkingDir, c.Path, d.platform.OS)
+	prevWd := d.image.Config.WorkingDir
+
+	wd, err := system.NormalizeWorkdir(prevWd, c.Path, d.platform.OS)
 	if err != nil {
 		return errors.Wrap(err, "normalizing workdir")
 	}
@@ -1536,6 +1540,10 @@ func dispatchWorkdir(d *dispatchState, c *instructions.WorkdirCommand, commit bo
 	// From this point forward, we can use UNIX style paths.
 	wd = system.ToSlash(wd, d.platform.OS)
 	d.state = d.state.Dir(wd)
+
+	if commit && workdirWasSet {
+		d.state = d.state.AddEnv("OLDPWD", prevWd)
+	}
 
 	if commit {
 		withLayer := false

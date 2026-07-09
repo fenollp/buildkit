@@ -279,6 +279,90 @@ RUN echo bar
 	assert.Equal(t, "2024-01-17 21:49:12 +0000 UTC", res.BaseImage.Created.String())
 }
 
+func TestWorkdirOldPWD(t *testing.T) {
+	t.Parallel()
+
+	ctx := appcontext.Context()
+
+	solve := func(t *testing.T, df string) (*Result, *llb.EnvList) {
+		t.Helper()
+		res, err := Dockerfile2LLB(ctx, []byte(df), ConvertOpt{})
+		require.NoError(t, err)
+		env, err := res.State.Env(ctx)
+		require.NoError(t, err)
+		return res, env
+	}
+
+	t.Run("unset on first workdir", func(t *testing.T) {
+		_, env := solve(t, `FROM scratch
+WORKDIR /a
+`)
+		_, ok := env.Get("OLDPWD")
+		require.False(t, ok)
+	})
+
+	t.Run("previous workdir", func(t *testing.T) {
+		_, env := solve(t, `FROM scratch
+WORKDIR /b
+WORKDIR /c
+`)
+		v, _ := env.Get("OLDPWD")
+		require.Equal(t, "/b", v)
+	})
+
+	t.Run("relative paths are resolved", func(t *testing.T) {
+		_, env := solve(t, `FROM scratch
+WORKDIR /a
+WORKDIR b
+WORKDIR c
+`)
+		v, _ := env.Get("OLDPWD")
+		require.Equal(t, "/a/b", v)
+	})
+
+	t.Run("same interaction with FROMs as PWD", func(t *testing.T) {
+		_, env := solve(t, `FROM scratch AS base
+WORKDIR /a
+WORKDIR /b
+FROM base
+`)
+		v, _ := env.Get("OLDPWD")
+		require.Equal(t, "/a", v)
+	})
+
+	t.Run("inherited through FROMs", func(t *testing.T) {
+		_, env := solve(t, `FROM scratch AS base
+WORKDIR /a
+FROM base
+WORKDIR /b
+`)
+		v, _ := env.Get("OLDPWD")
+		require.Equal(t, "/a", v)
+	})
+
+	t.Run("expandable", func(t *testing.T) {
+		res, env := solve(t, `FROM scratch
+WORKDIR /a
+WORKDIR /b
+WORKDIR $OLDPWD
+`)
+		require.Equal(t, "/a", res.Image.Config.WorkingDir)
+		v, _ := env.Get("OLDPWD")
+		require.Equal(t, "/b", v)
+	})
+
+	t.Run("not committed to image config", func(t *testing.T) {
+		res, _ := solve(t, `FROM scratch
+WORKDIR /b
+WORKDIR /c
+`)
+		_, okPWD := shell.EnvsFromSlice(res.Image.Config.Env).Get("PWD")
+		_, okOLDPWD := shell.EnvsFromSlice(res.Image.Config.Env).Get("OLDPWD")
+		require.Equal(t, okPWD, okOLDPWD)
+		require.False(t, okOLDPWD)
+	})
+}
+
 func TestDispatchHealthcheckHistory(t *testing.T) {
 	hc := &instructions.HealthCheckCommand{
 		Health: &dockerspec.HealthcheckConfig{
