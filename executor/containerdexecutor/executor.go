@@ -332,8 +332,8 @@ func (w *containerdExecutor) Exec(ctx context.Context, id string, process execut
 	if meta.Cwd != "" {
 		spec.Process.Cwd = meta.Cwd
 	}
-	if len(process.Meta.Env) > 0 {
-		spec.Process.Env = process.Meta.Env
+	if env := process.Meta.ProcessEnv(); len(env) > 0 {
+		spec.Process.Env = env
 	}
 
 	fixProcessOutput(&process)

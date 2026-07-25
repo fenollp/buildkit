@@ -1506,6 +1506,11 @@ func dispatchRun(d *dispatchState, c *instructions.RunCommand, proxy *llb.ProxyE
 }
 
 func dispatchWorkdir(d *dispatchState, c *instructions.WorkdirCommand, commit bool, opt *dispatchOpt) error {
+	// Whether a WORKDIR is what put us in the directory we are about to leave.
+	// Until then there is nothing to leave behind, in the same way that a freshly
+	// started shell has no OLDPWD.
+	workdirWasSet := d.workdirSet
+
 	if commit {
 		// This linter rule checks if workdir has been set to an absolute value locally
 		// within the current dockerfile. Absolute paths in base images are ignored
@@ -1523,7 +1528,9 @@ func dispatchWorkdir(d *dispatchState, c *instructions.WorkdirCommand, commit bo
 		d.workdirSet = true
 	}
 
-	wd, err := system.NormalizeWorkdir(d.image.Config.WorkingDir, c.Path, d.platform.OS)
+	prevWd := d.image.Config.WorkingDir
+
+	wd, err := system.NormalizeWorkdir(prevWd, c.Path, d.platform.OS)
 	if err != nil {
 		return errors.Wrap(err, "normalizing workdir")
 	}
@@ -1536,6 +1543,14 @@ func dispatchWorkdir(d *dispatchState, c *instructions.WorkdirCommand, commit bo
 	// From this point forward, we can use UNIX style paths.
 	wd = system.ToSlash(wd, d.platform.OS)
 	d.state = d.state.Dir(wd)
+
+	// Like cd(1), remember the directory we are leaving so that the processes
+	// that follow are told about it through OLDPWD. commit is false when this is
+	// only replaying the working directory inherited from the base, which is not
+	// a move away from a directory and so leaves nothing behind.
+	if commit && workdirWasSet {
+		d.state = d.state.OldDir(system.ToSlash(prevWd, d.platform.OS))
+	}
 
 	if commit {
 		withLayer := false

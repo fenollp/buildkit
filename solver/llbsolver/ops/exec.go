@@ -466,6 +466,7 @@ func (e *ExecOp) Exec(ctx context.Context, jobCtx solver.JobContext, inputs []so
 		Args:                      e.op.Meta.Args,
 		Env:                       e.op.Meta.Env,
 		Cwd:                       e.op.Meta.Cwd,
+		OldCwd:                    e.op.Meta.OldCwd,
 		User:                      e.op.Meta.User,
 		Hostname:                  e.op.Meta.Hostname,
 		ReadonlyRootFS:            p.ReadonlyRootFS,

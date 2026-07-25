@@ -700,8 +700,12 @@ type Meta struct {
 	CgroupParent              string                 `protobuf:"bytes,10,opt,name=cgroupParent,proto3" json:"cgroupParent,omitempty"`
 	RemoveMountStubsRecursive bool                   `protobuf:"varint,11,opt,name=removeMountStubsRecursive,proto3" json:"removeMountStubsRecursive,omitempty"`
 	ValidExitCodes            []int32                `protobuf:"varint,12,rep,packed,name=validExitCodes,proto3" json:"validExitCodes,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// oldCwd is the working directory the process is entering cwd from, if any.
+	// It is what a POSIX shell would have recorded in OLDPWD had it moved there
+	// with cd(1).
+	OldCwd        string `protobuf:"bytes,13,opt,name=oldCwd,proto3" json:"oldCwd,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Meta) Reset() {
@@ -809,6 +813,13 @@ func (x *Meta) GetValidExitCodes() []int32 {
 		return x.ValidExitCodes
 	}
 	return nil
+}
+
+func (x *Meta) GetOldCwd() string {
+	if x != nil {
+		return x.OldCwd
+	}
+	return ""
 }
 
 type HostIP struct {
@@ -3601,7 +3612,7 @@ const file_github_com_moby_buildkit_solver_pb_ops_proto_rawDesc = "" +
 	"\tsecretenv\x18\x05 \x03(\v2\r.pb.SecretEnvR\tsecretenv\x12-\n" +
 	"\n" +
 	"cdiDevices\x18\x06 \x03(\v2\r.pb.CDIDeviceR\n" +
-	"cdiDevices\"\xf3\x02\n" +
+	"cdiDevices\"\x8b\x03\n" +
 	"\x04Meta\x12\x12\n" +
 	"\x04args\x18\x01 \x03(\tR\x04args\x12\x10\n" +
 	"\x03env\x18\x02 \x03(\tR\x03env\x12\x10\n" +
@@ -3618,7 +3629,8 @@ const file_github_com_moby_buildkit_solver_pb_ops_proto_rawDesc = "" +
 	"\fcgroupParent\x18\n" +
 	" \x01(\tR\fcgroupParent\x12<\n" +
 	"\x19removeMountStubsRecursive\x18\v \x01(\bR\x19removeMountStubsRecursive\x12&\n" +
-	"\x0evalidExitCodes\x18\f \x03(\x05R\x0evalidExitCodes\",\n" +
+	"\x0evalidExitCodes\x18\f \x03(\x05R\x0evalidExitCodes\x12\x16\n" +
+	"\x06oldCwd\x18\r \x01(\tR\x06oldCwd\",\n" +
 	"\x06HostIP\x12\x12\n" +
 	"\x04Host\x18\x01 \x01(\tR\x04Host\x12\x0e\n" +
 	"\x02IP\x18\x02 \x01(\tR\x02IP\"D\n" +

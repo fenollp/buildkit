@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"net"
+	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/containerd/containerd/v2/core/mount"
@@ -18,6 +20,7 @@ type Meta struct {
 	Env            []string
 	User           string
 	Cwd            string
+	OldCwd         string
 	Hostname       string
 	Tty            bool
 	ReadonlyRootFS bool
@@ -32,6 +35,24 @@ type Meta struct {
 	Proxy          *network.ProxyConfig
 
 	RemoveMountStubsRecursive bool
+}
+
+// ProcessEnv returns the environment to start the process with, including the
+// OLDPWD a POSIX shell would have recorded had it entered Cwd with cd(1). A
+// shell reads PWD off the working directory of its own process, but nothing
+// tells it which directory that process came from, so OLDPWD has to be handed
+// over explicitly. A value the build set itself takes precedence, so that it
+// can override or opt out of this one.
+func (m Meta) ProcessEnv() []string {
+	if m.OldCwd == "" {
+		return m.Env
+	}
+	for _, env := range m.Env {
+		if name, _, _ := strings.Cut(env, "="); name == "OLDPWD" {
+			return m.Env
+		}
+	}
+	return append(slices.Clone(m.Env), "OLDPWD="+m.OldCwd)
 }
 
 type MountableRef interface {

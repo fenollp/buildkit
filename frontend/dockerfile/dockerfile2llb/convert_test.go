@@ -13,6 +13,7 @@ import (
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
 	"github.com/moby/buildkit/frontend/dockerfile/shell"
 	"github.com/moby/buildkit/frontend/dockerui"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/moby/buildkit/util/appcontext"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	digest "github.com/opencontainers/go-digest"
@@ -262,6 +263,99 @@ COPY --from=stage1 f2 /sub/
 `
 	_, err = Dockerfile2LLB(appcontext.Context(), []byte(df), ConvertOpt{})
 	require.EqualError(t, err, "circular dependency detected on stage: stage0")
+}
+
+// execMetas returns the exec op metadata of the dockerfile, keyed by the first
+// argument of each RUN so that the tests can name the step they assert on.
+func execMetas(t *testing.T, df string) map[string]*pb.Meta {
+	t.Helper()
+
+	ctx := appcontext.Context()
+	res, err := Dockerfile2LLB(ctx, []byte(df), ConvertOpt{})
+	require.NoError(t, err)
+	def, err := res.State.Marshal(ctx)
+	require.NoError(t, err)
+
+	metas := map[string]*pb.Meta{}
+	for _, dt := range def.Def {
+		var op pb.Op
+		require.NoError(t, op.UnmarshalVT(dt))
+		if e := op.GetExec(); e != nil {
+			// Args is the shell form, so the command is the last one.
+			metas[e.Meta.Args[len(e.Meta.Args)-1]] = e.Meta
+		}
+	}
+	return metas
+}
+
+func TestWorkdirOldCwd(t *testing.T) {
+	t.Parallel()
+
+	metas := execMetas(t, `FROM busybox AS base
+# The first WORKDIR leaves behind a directory no WORKDIR chose, so there is
+# nothing to record, the same way a freshly started shell has no OLDPWD.
+WORKDIR /a
+RUN base-first
+WORKDIR /b
+RUN base-second
+# Relative paths are resolved before being recorded.
+WORKDIR c
+RUN base-third
+
+# A stage picks up where its base stage left off, for OLDPWD as for the working
+# directory that PWD is read from.
+FROM base AS child
+RUN child-first
+WORKDIR /d
+RUN child-second
+
+# A stage on an image cannot know where that image left off.
+FROM busybox
+COPY --from=child / /
+RUN external-first
+WORKDIR /e
+RUN external-second
+`)
+	require.Len(t, metas, 7)
+
+	for _, tc := range []struct {
+		run    string
+		cwd    string
+		oldCwd string
+	}{
+		{run: "base-first", cwd: "/a", oldCwd: ""},
+		{run: "base-second", cwd: "/b", oldCwd: "/a"},
+		{run: "base-third", cwd: "/b/c", oldCwd: "/b"},
+		{run: "child-first", cwd: "/b/c", oldCwd: "/b"},
+		{run: "child-second", cwd: "/d", oldCwd: "/b/c"},
+		{run: "external-first", cwd: "/", oldCwd: ""},
+		{run: "external-second", cwd: "/e", oldCwd: ""},
+	} {
+		t.Run(tc.run, func(t *testing.T) {
+			meta := metas[tc.run]
+			require.NotNil(t, meta)
+			require.Equal(t, tc.cwd, meta.Cwd)
+			require.Equal(t, tc.oldCwd, meta.OldCwd)
+			// OLDPWD is left to the executor, which sets it from the metadata the
+			// same way a shell reads PWD off the working directory of its process.
+			_, ok := shell.EnvsFromSlice(meta.Env).Get("OLDPWD")
+			require.False(t, ok)
+		})
+	}
+}
+
+func TestWorkdirOldCwdNotCommittedToImageConfig(t *testing.T) {
+	t.Parallel()
+
+	// Like PWD, OLDPWD describes the state of the build and not that of the
+	// containers started from the resulting image.
+	res, err := Dockerfile2LLB(appcontext.Context(), []byte(`FROM scratch
+WORKDIR /a
+WORKDIR /b
+`), ConvertOpt{})
+	require.NoError(t, err)
+	_, ok := shell.EnvsFromSlice(res.Image.Config.Env).Get("OLDPWD")
+	require.False(t, ok)
 }
 
 func TestBaseImageConfig(t *testing.T) {

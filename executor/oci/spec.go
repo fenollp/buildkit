@@ -156,7 +156,7 @@ func GenerateSpec(ctx context.Context, meta executor.Meta, mounts []executor.Mou
 
 	opts = append(opts,
 		withProcessArgs(meta.Args...),
-		oci.WithEnv(meta.Env),
+		oci.WithEnv(meta.ProcessEnv()),
 		oci.WithProcessCwd(meta.Cwd),
 		oci.WithNewPrivileges,
 		oci.WithHostname(hostname),

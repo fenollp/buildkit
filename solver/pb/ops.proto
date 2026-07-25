@@ -66,6 +66,10 @@ message Meta {
 	string cgroupParent = 10;
 	bool removeMountStubsRecursive = 11;
 	repeated int32 validExitCodes = 12;
+	// oldCwd is the working directory the process is entering cwd from, if any.
+	// It is what a POSIX shell would have recorded in OLDPWD had it moved there
+	// with cd(1).
+	string oldCwd = 13;
 }
 
 message HostIP {

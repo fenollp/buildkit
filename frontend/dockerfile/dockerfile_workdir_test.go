@@ -208,6 +208,52 @@ COPY --from=base Dockerfile .
 	require.NoError(t, err)
 }
 
+// testWorkdirOldPWD ensures the shell of a RUN is told which directory WORKDIR
+// moved it away from, the way cd(1) reports OLDPWD.
+func testWorkdirOldPWD(t *testing.T, sb integration.Sandbox) {
+	integration.SkipOnPlatform(t, "windows")
+	f := getFrontend(t, sb)
+
+	dockerfile := []byte(`
+FROM busybox AS base
+# The first WORKDIR leaves behind a directory no WORKDIR chose, so there is
+# nothing to report.
+WORKDIR /a
+RUN [ -z "${OLDPWD}" ]
+WORKDIR /b
+RUN [ "$PWD" = /b ] && [ "$OLDPWD" = /a ]
+# Relative paths are resolved before being reported.
+WORKDIR c
+RUN [ "$PWD" = /b/c ] && [ "$OLDPWD" = /b ]
+
+# A stage picks up where its base stage left off, for OLDPWD as for PWD.
+FROM base
+RUN [ "$PWD" = /b/c ] && [ "$OLDPWD" = /b ]
+WORKDIR /d
+RUN [ "$OLDPWD" = /b/c ]
+# A build can still set OLDPWD itself.
+ENV OLDPWD=/elsewhere
+RUN [ "$OLDPWD" = /elsewhere ]
+`)
+
+	dir := integration.Tmpdir(
+		t,
+		fstest.CreateFile("Dockerfile", dockerfile, 0600),
+	)
+
+	c, err := client.New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = f.Solve(sb.Context(), c, client.SolveOpt{
+		LocalMounts: map[string]fsutil.FS{
+			dockerui.DefaultLocalNameDockerfile: dir,
+			dockerui.DefaultLocalNameContext:    dir,
+		},
+	}, nil)
+	require.NoError(t, err)
+}
+
 func testWorkdirExists(t *testing.T, sb integration.Sandbox) {
 	f := getFrontend(t, sb)
 

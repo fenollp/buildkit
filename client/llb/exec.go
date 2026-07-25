@@ -189,6 +189,14 @@ func (e *ExecOp) Marshal(ctx context.Context, c *Constraints) (digest.Digest, []
 		return "", nil, nil, nil, err
 	}
 
+	oldCwd, err := getOldDir(e.base)(ctx, c)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	if oldCwd != "" {
+		addCap(&e.constraints, pb.CapExecMetaOldCwd)
+	}
+
 	user, err := getUser(e.base)(ctx, c)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -219,6 +227,7 @@ func (e *ExecOp) Marshal(ctx context.Context, c *Constraints) (digest.Digest, []
 		Args:                      args,
 		Env:                       env.ToArray(),
 		Cwd:                       cwd,
+		OldCwd:                    oldCwd,
 		User:                      user,
 		Hostname:                  hostname,
 		CgroupParent:              cgrpParent,

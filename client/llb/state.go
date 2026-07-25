@@ -337,6 +337,12 @@ func (s State) Dirf(str string, v ...any) State {
 	return Dirf(str, v...)(s)
 }
 
+// OldDir returns a new [State] recording the working directory it moved away from.
+// See [OldDir]
+func (s State) OldDir(str string) State {
+	return OldDir(str)(s)
+}
+
 // GetEnv returns the value of the environment variable with the provided key.
 func (s State) GetEnv(ctx context.Context, key string, co ...ConstraintsOpt) (string, bool, error) {
 	c := &Constraints{}

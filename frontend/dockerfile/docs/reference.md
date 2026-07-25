@@ -2500,6 +2500,24 @@ RUN pwd
 The output of the final `pwd` command in this Dockerfile would be
 `/path/$DIRNAME`
 
+Once a `WORKDIR` has been set, every following `WORKDIR` reports the directory
+it moves away from to the commands that follow, in the `OLDPWD` environment
+variable that `cd` maintains in a POSIX shell. Like the working directory behind
+`PWD`, it carries over to the stages that build on top of it. For example:
+
+```dockerfile
+WORKDIR /a
+WORKDIR /b
+RUN echo $OLDPWD
+```
+
+The output of the `echo` command in this Dockerfile would be `/a`. Setting
+`OLDPWD` with `ENV` overrides it.
+
+Like `PWD`, `OLDPWD` describes the state of the build: it's given to the
+commands that follow, but it isn't embedded in the image and isn't available in
+the final container.
+
 If not specified, the default working directory is `/`. In practice, if you aren't building a Dockerfile from scratch (`FROM scratch`),
 the `WORKDIR` may likely be set by the base image you're using.
 

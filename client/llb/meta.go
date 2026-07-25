@@ -20,6 +20,7 @@ type contextKeyT string
 var (
 	keyArgs           = contextKeyT("llb.exec.args")
 	keyDir            = contextKeyT("llb.exec.dir")
+	keyOldDir         = contextKeyT("llb.exec.olddir")
 	keyEnv            = contextKeyT("llb.exec.env")
 	keyExtraHost      = contextKeyT("llb.exec.extrahost")
 	keyHostname       = contextKeyT("llb.exec.hostname")
@@ -94,6 +95,16 @@ func dirf(value string, replace bool, v ...any) StateOption {
 	}
 }
 
+// OldDir returns a [StateOption] which records the working directory the state
+// is moving away from, so that [State.Run] can report it to the process the way
+// cd(1) reports OLDPWD. Unlike [Dir] it has no effect on where the process runs.
+// See [State.With] for where to use this.
+func OldDir(str string) StateOption {
+	return func(s State) State {
+		return s.WithValue(keyOldDir, str)
+	}
+}
+
 // User returns a [StateOption] which sets the user for the state which will be used by [State.Run].
 // This is the equivalent of [State.User]
 // See [State.With] for where to use this.
@@ -130,6 +141,19 @@ func getEnv(s State) func(context.Context, *Constraints) (*EnvList, error) {
 func getDir(s State) func(context.Context, *Constraints) (string, error) {
 	return func(ctx context.Context, c *Constraints) (string, error) {
 		v, err := s.getValue(keyDir)(ctx, c)
+		if err != nil {
+			return "", err
+		}
+		if v != nil {
+			return v.(string), nil
+		}
+		return "", nil
+	}
+}
+
+func getOldDir(s State) func(context.Context, *Constraints) (string, error) {
+	return func(ctx context.Context, c *Constraints) (string, error) {
+		v, err := s.getValue(keyOldDir)(ctx, c)
 		if err != nil {
 			return "", err
 		}

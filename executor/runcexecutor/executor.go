@@ -498,8 +498,8 @@ func (w *runcExecutor) Exec(ctx context.Context, id string, process executor.Pro
 		spec.Process.Cwd = process.Meta.Cwd
 	}
 
-	if len(process.Meta.Env) > 0 {
-		spec.Process.Env = process.Meta.Env
+	if env := process.Meta.ProcessEnv(); len(env) > 0 {
+		spec.Process.Env = env
 	}
 
 	err = w.exec(ctx, id, spec.Process, process, nil)
