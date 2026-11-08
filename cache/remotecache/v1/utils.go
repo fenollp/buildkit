@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 
 	cerrdefs "github.com/containerd/errdefs"
 	cacheimporttypes "github.com/moby/buildkit/cache/remotecache/v1/types"
@@ -32,8 +31,28 @@ func sortConfig(cc *cacheimporttypes.CacheConfig) {
 		unsortedLayers[i] = il
 		sortedLayers[i] = il
 	}
-	slices.SortFunc(sortedLayers, func(a, b *indexedLayer) int {
-		return cmp.Or(cmp.Compare(a.l.Blob, b.l.Blob), cmp.Compare(a.l.ParentIndex, b.l.ParentIndex))
+	// ParentIndex refers to the unsorted (insertion) order, so it can't be
+	// used as a tie-breaker. Compare the full blob chain from the root
+	// instead, which identifies a layer independently of insertion order.
+	chains := make([][]digest.Digest, len(cc.Layers))
+	var chainOf func(i int, depth int) []digest.Digest
+	chainOf = func(i int, depth int) []digest.Digest {
+		if chains[i] != nil {
+			return chains[i]
+		}
+		var c []digest.Digest
+		if p := cc.Layers[i].ParentIndex; p >= 0 && p < len(cc.Layers) && depth < len(cc.Layers) {
+			c = slices.Clone(chainOf(p, depth+1))
+		}
+		c = append(c, cc.Layers[i].Blob)
+		chains[i] = c
+		return c
+	}
+	for i := range cc.Layers {
+		chainOf(i, 0)
+	}
+	slices.SortStableFunc(sortedLayers, func(a, b *indexedLayer) int {
+		return cmp.Or(cmp.Compare(a.l.Blob, b.l.Blob), slices.Compare(chains[a.oldIndex], chains[b.oldIndex]))
 	})
 	for i, l := range sortedLayers {
 		l.newIndex = i
@@ -56,55 +75,111 @@ func sortConfig(cc *cacheimporttypes.CacheConfig) {
 	unsortedRecords := make([]*indexedRecord, len(cc.Records))
 	sortedRecords := make([]*indexedRecord, len(cc.Records))
 
+	// Several records can share a digest (a cache record digest does not
+	// include its inputs, e.g. the same RUN on different bases), and their
+	// inputs can in turn share digests. Comparing one level deep leaves ties
+	// whose order depends on map iteration, so records are ordered by a
+	// structural key covering the whole input subgraph and the results.
+	// Inputs are collected from map iteration too, so they are canonicalized
+	// by the same key.
+	keys := make([]string, len(cc.Records))
+	const inProgress = "\x00"
+	var keyOf func(i int) string
+	keyOf = func(i int) string {
+		if keys[i] == inProgress {
+			// cycles can't come out of Marshal; be defensive anyway
+			return cc.Records[i].Digest.String()
+		}
+		if keys[i] != "" {
+			return keys[i]
+		}
+		keys[i] = inProgress
+		r := cc.Records[i]
+		var b []byte
+		b = fmt.Appendf(b, "%s|", r.Digest)
+		for _, inputs := range r.Inputs {
+			in := make([]string, 0, len(inputs))
+			for _, inp := range inputs {
+				src := ""
+				if inp.LinkIndex >= 0 && inp.LinkIndex < len(cc.Records) {
+					src = keyOf(inp.LinkIndex)
+				}
+				in = append(in, inp.Selector+"@"+src)
+			}
+			slices.Sort(in)
+			b = fmt.Appendf(b, "[%v]", in)
+		}
+		for _, res := range r.Results {
+			var chain []digest.Digest
+			if res.LayerIndex >= 0 && res.LayerIndex < len(chains) {
+				chain = chains[res.LayerIndex]
+			}
+			b = fmt.Appendf(b, "<%v@%d>", chain, res.CreatedAt.UnixNano())
+		}
+		keys[i] = digest.FromBytes(b).String()
+		return keys[i]
+	}
+	for i := range cc.Records {
+		keyOf(i)
+	}
+
+	for _, r := range cc.Records {
+		for _, inputs := range r.Inputs {
+			slices.SortStableFunc(inputs, func(a, b cacheimporttypes.CacheInput) int {
+				return cmp.Or(
+					cmp.Compare(a.Selector, b.Selector),
+					cmp.Compare(keys[a.LinkIndex], keys[b.LinkIndex]),
+				)
+			})
+		}
+	}
+
 	for i, r := range cc.Records {
 		ir := &indexedRecord{oldIndex: i, r: r}
 		unsortedRecords[i] = ir
 		sortedRecords[i] = ir
 	}
-	sort.Slice(sortedRecords, func(i, j int) bool {
-		ri := sortedRecords[i].r
-		rj := sortedRecords[j].r
-		if ri.Digest != rj.Digest {
-			return ri.Digest < rj.Digest
-		}
-		if len(ri.Inputs) != len(rj.Inputs) {
-			return len(ri.Inputs) < len(rj.Inputs)
-		}
-		for i, inputs := range ri.Inputs {
-			if len(ri.Inputs[i]) != len(rj.Inputs[i]) {
-				return len(ri.Inputs[i]) < len(rj.Inputs[i])
-			}
-			for j := range inputs {
-				if ri.Inputs[i][j].Selector != rj.Inputs[i][j].Selector {
-					return ri.Inputs[i][j].Selector < rj.Inputs[i][j].Selector
-				}
-				inputDigesti := cc.Records[ri.Inputs[i][j].LinkIndex].Digest
-				inputDigestj := cc.Records[rj.Inputs[i][j].LinkIndex].Digest
-				if inputDigesti != inputDigestj {
-					return inputDigesti < inputDigestj
-				}
-			}
-		}
-		return false
+	slices.SortStableFunc(sortedRecords, func(a, b *indexedRecord) int {
+		return cmp.Or(
+			cmp.Compare(a.r.Digest, b.r.Digest),
+			cmp.Compare(len(a.r.Inputs), len(b.r.Inputs)),
+			cmp.Compare(keys[a.oldIndex], keys[b.oldIndex]),
+		)
 	})
-	for i, l := range sortedRecords {
-		l.newIndex = i
+	// Structurally identical records (same key) can't be told apart, so
+	// whichever of them a link points to would depend on insertion order.
+	// Collapse them into one record: this keeps the output deterministic
+	// and the config smaller.
+	newIndexByKey := map[string]int{}
+	n := 0
+	for _, l := range sortedRecords {
+		if idx, ok := newIndexByKey[keys[l.oldIndex]]; ok {
+			l.newIndex = idx
+			continue
+		}
+		l.newIndex = n
+		newIndexByKey[keys[l.oldIndex]] = n
+		n++
 	}
 
-	records := make([]cacheimporttypes.CacheRecord, len(sortedRecords))
-	for i, r := range sortedRecords {
+	records := make([]cacheimporttypes.CacheRecord, 0, n)
+	for _, r := range sortedRecords {
+		if r.newIndex < len(records) {
+			continue // duplicate of an already emitted record
+		}
 		for j := range r.r.Results {
 			r.r.Results[j].LayerIndex = unsortedLayers[r.r.Results[j].LayerIndex].newIndex
 		}
 		for j, inputs := range r.r.Inputs {
 			for k := range inputs {
-				r.r.Inputs[j][k].LinkIndex = unsortedRecords[r.r.Inputs[j][k].LinkIndex].newIndex
+				inputs[k].LinkIndex = unsortedRecords[inputs[k].LinkIndex].newIndex
 			}
 			slices.SortFunc(inputs, func(a, b cacheimporttypes.CacheInput) int {
-				return cmp.Compare(a.LinkIndex, b.LinkIndex)
+				return cmp.Or(cmp.Compare(a.LinkIndex, b.LinkIndex), cmp.Compare(a.Selector, b.Selector))
 			})
+			r.r.Inputs[j] = slices.Compact(inputs)
 		}
-		records[i] = r.r
+		records = append(records, r.r)
 	}
 
 	cc.Layers = layers
