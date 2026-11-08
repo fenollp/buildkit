@@ -217,11 +217,17 @@ func (ci *contentCacheImporter) importInlineCache(ctx context.Context, dt []byte
 					if m.Annotations == nil {
 						m.Annotations = map[string]string{}
 					}
-					if createdAt := createdDates[i]; createdAt != "" {
-						m.Annotations["buildkit/createdat"] = createdAt
+					// History is optional and may not have an entry per
+					// layer, so it must not be indexed blindly.
+					if i < len(createdDates) {
+						if createdAt := createdDates[i]; createdAt != "" {
+							m.Annotations["buildkit/createdat"] = createdAt
+						}
 					}
-					if createdBy := createdMsg[i]; createdBy != "" {
-						m.Annotations["buildkit/description"] = createdBy
+					if i < len(createdMsg) {
+						if createdBy := createdMsg[i]; createdBy != "" {
+							m.Annotations["buildkit/description"] = createdBy
+						}
 					}
 					m.Annotations[labels.LabelUncompressed] = img.Rootfs.DiffIDs[i].String()
 					layers[m.Digest] = v1.DescriptorProviderPair{
