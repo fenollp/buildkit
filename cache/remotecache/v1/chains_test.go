@@ -95,9 +95,13 @@ func TestSimpleMarshal(t *testing.T) {
 	err = Parse(dt, descPairs, newChains)
 	require.NoError(t, err)
 
-	cfg3, _, err := cc.Marshal(t.Context())
+	// the config re-exported from the imported chains must serialize
+	// identically (it is uploaded content-addressed)
+	cfg3, _, err := newChains.Marshal(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, cfg, cfg3)
+	dt3, err := json.Marshal(cfg3)
+	require.NoError(t, err)
+	require.JSONEq(t, string(dt), string(dt3))
 
 	// add extra item
 	_, ok, err := cc.Add(outputKey(dgst("bay"), 0), nil, nil)
